@@ -1,15 +1,26 @@
 #include <MeAuriga.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
 #define LEDNUM  12
 #define LEDPIN  44
+#define SCREEN_HEIGHT 64
+#define SCREEN_WIDTH 128
+#define OLED_RESET -1
+
+#define SCREEN_ADDRESS 0x3C 
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 enum RobotState {DRIVE, SLOW, STOP, BACKWARD, TURN};
 RobotState currentState;
 
 MeRGBLed led(PORT0, LEDNUM);
-MeUltrasonicSensor distSensor(PORT_10);
+MeUltrasonicSensor distSensor(PORT_7);
 
 const int MAX_SPEED = 255;
+int driveSpeed = 0.8 * MAX_SPEED;
 
 const int ML_PWM = 11;
 const int ML_IN1 = 48;
@@ -27,6 +38,8 @@ int speed = 200;
 const int DISTANCE_SWITCH = 100;
 const int DISTANCE_LIMIT = 30;
 const int WAIT_TIME = 2000;
+const int BACKWARD_TIME = 1000;
+const int TURN_TIME = 1400;
 unsigned long currentTime = 0;
 double distance = 0;
 
@@ -43,6 +56,13 @@ void setup() {
   pinMode(MR_IN1, OUTPUT);  
   pinMode(MR_IN2, OUTPUT);
 
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("Échec d'allocation SSD1306"));
+    for(;;);
+  }
+
+  display.clearDisplay();
+  
   currentState = DRIVE;
 }
 
@@ -90,8 +110,19 @@ void distancePrintTask(unsigned long ct, double dist){
   Serial.print("Distance: ");
   Serial.print(dist);
   Serial.println(" cm");
-  Serial.print("Vitesse : ");
+  Serial.print("Vitesse: ");
   Serial.println(speed);
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.print("Distance: ");
+  display.print(dist);
+  display.println(" cm");
+  display.print("Vitesse: ");
+  display.println(speed);
+  display.display();
 }
 
 void stateManager(unsigned long ct, double dist){
@@ -108,13 +139,16 @@ void stateManager(unsigned long ct, double dist){
     case BACKWARD:
       backward(ct);
       break;
+    case TURN:
+      turn(ct);
+      break;
   }
 }
 
 void drive(double dist){
   static bool firstTime = true;
   if (firstTime){
-    speed = 200;
+    speed = driveSpeed;
     digitalWrite(ML_IN2, LOW);
     digitalWrite(ML_IN1, HIGH);
     analogWrite(ML_PWM, speed);
@@ -130,6 +164,7 @@ void drive(double dist){
     for (int i = 1; i <= LEDNUM / 2; i++){
       led.setColor(i, red, green, blue);
     }
+    led.setColor(LEDNUM, red, green, blue);
     led.show();
   }
   firstTime = false;
@@ -145,7 +180,7 @@ void drive(double dist){
 void slow(double dist){
   static bool firstTime = true;
   if (firstTime){
-    speed = 100;
+    speed = driveSpeed / 2;
     digitalWrite(ML_IN2, LOW);
     digitalWrite(ML_IN1, HIGH);
     analogWrite(ML_PWM, speed);
@@ -183,8 +218,8 @@ void stop(unsigned long ct){
   static unsigned long exitTime = 0;
   if (firstTime){
     speed = 0;
-    analogWrite(ML_PWM, 0);
-    analogWrite(MR_PWM, 0);
+    analogWrite(ML_PWM, speed);
+    analogWrite(MR_PWM, speed);
 
     resetLeds();
     red = 200;
@@ -204,6 +239,51 @@ void stop(unsigned long ct){
 }
 
 void backward(unsigned long ct){
+  static bool firstTime = true;
+  static unsigned long exitTime = 0;
   
+  if (firstTime){
+    speed = driveSpeed / 2;
+    digitalWrite(ML_IN2, HIGH);
+    digitalWrite(ML_IN1, LOW);
+    analogWrite(ML_PWM, speed);
+
+    digitalWrite(MR_IN2, HIGH);
+    digitalWrite(MR_IN1, LOW);
+    analogWrite(MR_PWM, speed);
+
+    exitTime = ct + BACKWARD_TIME;
+  }
+  firstTime = false;
+
+  bool transition = ct > exitTime;
+  if (transition) {
+    firstTime = true;
+    currentState = TURN;
+  }
+}
+
+void turn(unsigned long ct){
+  static bool firstTime = true;
+  static unsigned long exitTime = 0;
+
+  if (firstTime){
+    digitalWrite(ML_IN2, LOW);
+    digitalWrite(ML_IN1, HIGH);
+    analogWrite(ML_PWM, speed);
+
+    digitalWrite(MR_IN2, HIGH);
+    digitalWrite(MR_IN1, LOW);
+    analogWrite(MR_PWM, speed);
+
+    exitTime = ct + TURN_TIME;
+  }
+  firstTime = false;
+
+  bool transition = ct > exitTime;
+  if (transition){
+    firstTime = true;
+    currentState = DRIVE;
+  }
 }
 
