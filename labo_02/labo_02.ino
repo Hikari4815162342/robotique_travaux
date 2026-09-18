@@ -110,8 +110,6 @@ void distancePrintTask(unsigned long ct, double dist){
   Serial.print("Distance: ");
   Serial.print(dist);
   Serial.println(" cm");
-  Serial.print("Vitesse: ");
-  Serial.println(speed);
 
   display.clearDisplay();
   display.setTextSize(1);
@@ -120,9 +118,6 @@ void distancePrintTask(unsigned long ct, double dist){
   display.print("Distance: ");
   display.print(dist);
   display.println(" cm");
-  display.print("Vitesse: ");
-  display.println(speed);
-  display.display();
 }
 
 void stateManager(unsigned long ct, double dist){
