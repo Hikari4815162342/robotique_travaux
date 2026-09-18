@@ -39,7 +39,7 @@ const int DISTANCE_SWITCH = 100;
 const int DISTANCE_LIMIT = 30;
 const int WAIT_TIME = 2000;
 const int BACKWARD_TIME = 1000;
-const int TURN_TIME = 1400;
+const int TURN_TIME = 1200;
 unsigned long currentTime = 0;
 double distance = 0;
 
@@ -148,6 +148,8 @@ void stateManager(unsigned long ct, double dist){
 void drive(double dist){
   static bool firstTime = true;
   if (firstTime){
+    firstTime = false;
+    
     speed = driveSpeed;
     digitalWrite(ML_IN2, LOW);
     digitalWrite(ML_IN1, HIGH);
@@ -167,7 +169,6 @@ void drive(double dist){
     led.setColor(LEDNUM, red, green, blue);
     led.show();
   }
-  firstTime = false;
 
   bool transition = dist < DISTANCE_SWITCH;
   if (transition){
@@ -180,6 +181,8 @@ void drive(double dist){
 void slow(double dist){
   static bool firstTime = true;
   if (firstTime){
+    firstTime = false;
+    
     speed = driveSpeed / 2;
     digitalWrite(ML_IN2, LOW);
     digitalWrite(ML_IN1, HIGH);
@@ -198,7 +201,6 @@ void slow(double dist){
     }
     led.show();
   }
-  firstTime = false;
 
   bool transitionStop = dist < DISTANCE_LIMIT;
   if (transitionStop){
@@ -215,8 +217,11 @@ void slow(double dist){
 
 void stop(unsigned long ct){
   static bool firstTime = true;
+  static unsigned lastTime = 0;
   static unsigned long exitTime = 0;
   if (firstTime){
+    firstTime = false;
+    
     speed = 0;
     analogWrite(ML_PWM, speed);
     analogWrite(MR_PWM, speed);
@@ -229,9 +234,8 @@ void stop(unsigned long ct){
     led.show();
     exitTime = ct + WAIT_TIME;
   }
-  firstTime = false;
 
-  bool transition = ct > exitTime;
+  bool transition = ct >= exitTime;
   if (transition) {
     firstTime = true;
     currentState = BACKWARD;
@@ -243,6 +247,8 @@ void backward(unsigned long ct){
   static unsigned long exitTime = 0;
   
   if (firstTime){
+    firstTime = false;
+
     speed = driveSpeed / 2;
     digitalWrite(ML_IN2, HIGH);
     digitalWrite(ML_IN1, LOW);
@@ -254,9 +260,8 @@ void backward(unsigned long ct){
 
     exitTime = ct + BACKWARD_TIME;
   }
-  firstTime = false;
-
-  bool transition = ct > exitTime;
+  
+  bool transition = ct >= exitTime;
   if (transition) {
     firstTime = true;
     currentState = TURN;
@@ -268,19 +273,21 @@ void turn(unsigned long ct){
   static unsigned long exitTime = 0;
 
   if (firstTime){
-    digitalWrite(ML_IN2, LOW);
-    digitalWrite(ML_IN1, HIGH);
+    firstTime = false;
+    
+    speed = driveSpeed / 2;
+    digitalWrite(ML_IN2, HIGH);
+    digitalWrite(ML_IN1, LOW);
     analogWrite(ML_PWM, speed);
 
-    digitalWrite(MR_IN2, HIGH);
-    digitalWrite(MR_IN1, LOW);
+    digitalWrite(MR_IN2, LOW);
+    digitalWrite(MR_IN1, HIGH);
     analogWrite(MR_PWM, speed);
 
     exitTime = ct + TURN_TIME;
   }
-  firstTime = false;
 
-  bool transition = ct > exitTime;
+  bool transition = ct >= exitTime;
   if (transition){
     firstTime = true;
     currentState = DRIVE;
