@@ -6,70 +6,128 @@ const int PULSE = 9;
 const double RATIO = 39.267;
 
 const double DIAMETER = 6.5;
-const double TICK_TOUR = PULSE * RATIO;
+const int TOUR = 360;
 const double CIRC = PI * DIAMETER;
-int toGo = 4 * 30;
-const double NB_TICK = toGo/CIRC * TICK_TOUR;
+const short SPEED = 100;
 
 const String DA = "2280684";
 unsigned long currentTime = 0;
 
+#define LEDNUM  12
+#define LEDPIN  44
+const int LED_TOGO = 7;
 
-MeEncoderOnBoard Encoder_1(SLOT1);
-MeEncoderOnBoard Encoder_2(SLOT2);
+MeRGBLed led( PORT0, LEDNUM );
+MeEncoderOnBoard encoderRight(SLOT1);
+MeEncoderOnBoard encoderLeft(SLOT2);
+MeGyro gyro(0, 0x69);
 
-void isr_process_encoder1(void)
+void rightEncoderInterrupt(void)
 {
-  if(digitalRead(Encoder_1.getPortB()) == 0)
+  if(digitalRead(encoderRight.getPortB()) == 0)
   {
-    Encoder_1.pulsePosMinus();
+    encoderRight.pulsePosMinus();
   }
   else
   {
-    Encoder_1.pulsePosPlus();;
+    encoderRight.pulsePosPlus();;
   }
 }
 
-void isr_process_encoder2(void)
+void leftEncoderInterrupt(void)
 {
-  if(digitalRead(Encoder_2.getPortB()) == 0)
+  if(digitalRead(encoderLeft.getPortB()) == 0)
   {
-    Encoder_2.pulsePosMinus();
+    encoderLeft.pulsePosMinus();
   }
   else
   {
-    Encoder_2.pulsePosPlus();
+    encoderLeft.pulsePosPlus();
   }
 }
 
-void setup() {
-  attachInterrupt(Encoder_1.getIntNum(), isr_process_encoder1, RISING);
-  attachInterrupt(Encoder_2.getIntNum(), isr_process_encoder2, RISING);
-  Serial.begin(115200);
 
-  //Set PWM 8KHz
+void encoderSetup() {
+  attachInterrupt(encoderRight.getIntNum(), rightEncoderInterrupt, RISING);
+  attachInterrupt(encoderLeft.getIntNum(), leftEncoderInterrupt, RISING);
+  
   TCCR1A = _BV(WGM10);
   TCCR1B = _BV(CS11) | _BV(WGM12);
 
   TCCR2A = _BV(WGM21) | _BV(WGM20);
   TCCR2B = _BV(CS21);
-
-  Encoder_1.setPulse(PULSE);
-  Encoder_2.setPulse(PULSE);
-  Encoder_1.setRatio(RATIO);
-  Encoder_2.setRatio(RATIO);
-  Encoder_1.setPosPid(1.8,0,1.2);
-  Encoder_2.setPosPid(1.8,0,1.2);
-  Encoder_1.setSpeedPid(0.18,0,0);
-  Encoder_2.setSpeedPid(0.18,0,0);
+  
+  encoderRight.setPulse(PULSE);
+  encoderLeft.setPulse(PULSE);
+  
+  encoderRight.setRatio(RATIO);
+  encoderLeft.setRatio(RATIO);
+  
+  encoderRight.setPosPid(1.8,0,1.2);
+  encoderLeft.setPosPid(1.8,0,1.2);
+  
+  encoderRight.setSpeedPid(0.18,0,0);
+  encoderLeft.setSpeedPid(0.18,0,0);
 }
+
+void goStraight(short speed = 100, short firstRun = 0) {
+    static double zAngleGoal = 0.0;
+    
+    static double error = 0.0;
+    static double previousError = 0.0;
+    static double output = 0;
+    
+    const double kp = 4.0;
+    const double kd = 2.0;
+    
+    if (firstRun) {
+      firstRun = 0;
+
+      zAngleGoal = gyro.getAngleZ();
+      
+      encoderLeft.runSpeed(speed);
+      encoderRight.runSpeed(-speed);
+      
+      return;
+    }
+    
+    error = gyro.getAngleZ() - zAngleGoal;
+    
+    output = kp * error + kd * (error - previousError);
+    
+    previousError = error;        
+    
+    encoderLeft.runSpeed(speed - output);
+    encoderRight.runSpeed(-speed - output);
+}
+
+void shutAllLeds(){
+  led.setColor(0, 0, 0);
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  led.setpin(LEDPIN);
+  encoderSetup();
+  gyro.begin();
+  shutAllLeds();
+}
+
 void loop() {
   currentTime = millis();
+  encodersTask();
+  gyro.update();
   stateManager(currentTime);
 }
 
+void encodersTask(){
+  encoderRight.loop();
+  encoderLeft.loop();
+}
+
 void stateManager(unsigned long ct){
-  switch (SETUP){
+  switch (currentState){
     case SETUP:
       setupState(ct);
       break;
@@ -97,6 +155,19 @@ void stateManager(unsigned long ct){
   }
 }
 
+void stopMotors(){
+  encoderLeft.runSpeed(0);
+  encoderRight.runSpeed(0);
+}
+
+float getLedProgression(double distance){
+  long avgPosition = (abs(encoderLeft.getCurPos()) + abs(encoderRight.getCurPos())) / 2;
+  long distanceToGo = distance - avgPosition;
+  long ecart = distance - distanceToGo;
+  
+  return ecart / distance;
+}
+
 void setupState(unsigned long ct){
   static unsigned long exitTime = 0;
   int rate = 3000;
@@ -117,8 +188,42 @@ void setupState(unsigned long ct){
 
 }
 
-void segAState(){
+void segAState(){ 
+  static bool firstTime = true;
 
+  if (firstTime){
+    Serial.println("ENTRÉE SEGMENT A");
+    gyro.update();
+    goStraight(100, 1);
+
+    firstTime = false;
+  }
+
+  goStraight(); 
+
+  int toGo = 4 * 59;
+  double distance = toGo/CIRC * TOUR;
+  float progression = getLedProgression(distance);
+  int nbLeds = round(progression * LED_TOGO);
+  
+
+  for (int i = 1; i <= nbLeds; i++){
+    led.setColor(i, 50, 50, 50);
+  }
+  led.show();
+
+  int offset = 0.02 * distance;
+  long avgPosition = (abs(encoderLeft.getCurPos()) + abs(encoderRight.getCurPos())) / 2;
+  bool transition = avgPosition >= distance - offset;
+
+  if (transition){
+    Serial.println("SORTIE SEGMENT A");
+    stopMotors();
+    led.setColor(LEDNUM, 0, 200, 0);
+    led.show();
+    firstTime = true;
+    currentState = PIVOT_A;
+  }
 }
 
 void pivotAState(){
