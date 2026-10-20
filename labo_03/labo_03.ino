@@ -19,7 +19,7 @@ const double DIAMETER = 6.5;
 const int TICK_TOUR = PULSE * RATIO;
 const double CIRC_WHEEL = PI * DIAMETER;
 const double CIRC_ROBOT = 48.7;
-const int SPEED = 100;
+int speed = 100;
 
 const double QUARTER = CIRC_ROBOT / 4.0;
 const double NB_TOURS = QUARTER / CIRC_WHEEL;
@@ -34,6 +34,7 @@ unsigned long currentTime = 0;
 #define LEDNUM 12
 #define LEDPIN 44
 const int LED_TOGO = 7;
+const int FIRST_LED = 1;
 
 #define SCREEN_HEIGHT 64
 #define SCREEN_WIDTH 128
@@ -48,6 +49,8 @@ MeEncoderOnBoard encoderRight(SLOT1);
 MeEncoderOnBoard encoderLeft(SLOT2);
 MeUltrasonicSensor distSensor(PORT_6);
 MeGyro gyro(0, 0x69);
+
+double distance = 0;
 
 void rightEncoderInterrupt(void) {
   if (digitalRead(encoderRight.getPortB()) == 0) {
@@ -123,6 +126,7 @@ void goStraight(short speed = 100, short firstRun = 0) {
 }
 void shutAllLeds() {
   led.setColor(0, 0, 0);
+  led.show();
 }
 
 void setup() {
@@ -146,10 +150,11 @@ void setup() {
 void loop() {
   //Serial.println(gyro.getAngleZ());
   currentTime = millis();
+  distance = getDistance(currentTime);
   printAngle(currentTime);
-  encodersTask();
   gyro.update();
   stateManager(currentTime);
+  encodersTask();
 }
 
 void printAngle(unsigned long ct) {
@@ -167,7 +172,10 @@ void printAngle(unsigned long ct) {
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
   display.print("Angle: ");
-  display.println(gyro.getAngleZ());
+  display.print(gyro.getAngleZ());
+  display.print(" ---  Distance: ");
+  display.print(distance);
+  display.println(" cm");
   display.display();
 }
 
@@ -222,7 +230,7 @@ void stopMotors() {
   encoderRight.setTarPWM(0);
 }
 
-float getLedProgression(double distance) {
+float getLedProgressionA(double distance) {
   long avgPosition = (abs(encoderLeft.getPulsePos()) + abs(encoderRight.getPulsePos())) / 2;
   long distanceToGo = distance - avgPosition;
   long gap = distance - distanceToGo;
@@ -256,7 +264,6 @@ void segAState() {
   if (firstTime) {
     Serial.println("ENTRÉE SEGMENT A");
     resetDistance();
-    gyro.update();
     goStraight(100, 1);
 
     firstTime = false;
@@ -266,7 +273,7 @@ void segAState() {
 
   int toGo = 4 * 59;
   double distance = toGo / CIRC_WHEEL * TICK_TOUR;
-  float progression = getLedProgression(distance);
+  float progression = getLedProgressionA(distance);
   int nbLeds = round(progression * LED_TOGO);
 
   for (int i = 1; i <= nbLeds; i++) {
@@ -326,6 +333,7 @@ void pivotAState() {
   if (firstTime) {
     firstTime = false;
     resetDistance();
+    shutProgressionLeds();
     encoderLeft.moveTo(TICKS_FOR_90 * turnDirection());
     encoderRight.moveTo(TICKS_FOR_90 * turnDirection());
   }
@@ -344,7 +352,61 @@ void pivotAState() {
   }
 }
 
+double getDistance(unsigned long ct){
+  static unsigned long lastTime = 0;
+  int rate = 100;
+  static double lastDistance = 400;
+
+  if (ct - lastTime < rate){
+    return lastDistance;
+  }
+
+  lastTime = ct;
+
+  lastDistance = distSensor.distanceCm();
+
+  return lastDistance;
+}
+
+
 void segBState() {
+  static bool firstTime = true;
+  double slowDownDist = 45.0;
+  double stopDist = 35.0;
+  int slowSpeed = speed / 2;
+  static double startDistance = 0.0;
+
+  if (firstTime) {
+    Serial.println("ENTRÉE SEGMENT B");
+    resetDistance();
+    startDistance = distance;
+    goStraight(speed, 1);
+
+    firstTime = false;
+  }
+
+  if (distance > slowDownDist){
+    goStraight(speed, 0);
+  }else{
+    goStraight(slowSpeed, 0);
+  }
+
+  double nbLeds = map(distance, startDistance, stopDist, FIRST_LED, LED_TOGO);
+  for (int i = 1; i <= nbLeds; i++) {
+    led.setColor(i, 50, 50, 50);
+  }
+  led.show();
+
+  bool transition = distance <= stopDist;
+  if (transition){
+    Serial.println("SORTIE SEGMENT B");
+    stopMotors();
+    led.setColor(LEDNUM - 1, 0, 200, 0);
+    led.show();
+
+    firstTime = true;
+    currentState = PIVOT_B;
+  }
 }
 
 void pivotBState() {
