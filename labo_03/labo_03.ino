@@ -271,7 +271,7 @@ void segAState() {
 
   goStraight();
 
-  int toGo = 4 * 59;
+  int toGo = 3 * 59;
   double distance = toGo / CIRC_WHEEL * TICK_TOUR;
   float progression = getLedProgressionA(distance);
   int nbLeds = round(progression * LED_TOGO);
@@ -295,14 +295,27 @@ void segAState() {
 }
 
 int turnDirection() {
-  if (DA % 2 == 0) {
-    return -1;
-  } else {
-    return 1;
+  static int dir = 1;
+  switch (currentState){
+    case PIVOT_A:
+      if (DA % 2 == 0) {
+        dir = -1;
+      } else {
+        dir = 1;
+      }
+      break;
+    case PIVOT_B: 
+      if (DA % 2 == 0) {
+        dir = 1;
+      } else {
+        dir = -1;
+      }
+      break;
   }
+  return dir;
 }
 
-bool turn(double goal, int direction) {
+bool turn(double goal) {
   static double error = 0.0;
   static double previousError = 0.0;
   static double output = 0;
@@ -310,7 +323,6 @@ bool turn(double goal, int direction) {
 
   const double kp = 2.75;
   const double kd = 1.0;
-  goal = goal * direction;
 
   error = goal - gyro.getAngleZ();
 
@@ -330,10 +342,11 @@ bool turn(double goal, int direction) {
 
 void pivotAState() {
   static bool firstTime = true;
+  static double targetAngle = 0.0;
   if (firstTime) {
     firstTime = false;
-    resetDistance();
-    shutProgressionLeds();
+    resetDistance(); 
+    targetAngle = gyro.getAngleZ() + (TURN_90 * turnDirection());
     encoderLeft.moveTo(TICKS_FOR_90 * turnDirection());
     encoderRight.moveTo(TICKS_FOR_90 * turnDirection());
   }
@@ -342,7 +355,7 @@ void pivotAState() {
     return;
   }
   
-  bool transition = turn(TURN_90, turnDirection());
+  bool transition = turn(targetAngle);
 
   if (transition) {
     Serial.println("SORTIE PIVOT A");
@@ -410,9 +423,32 @@ void segBState() {
 }
 
 void pivotBState() {
+  static bool firstTime = true;
+  static double targetAngle = 0.0;
+  if (firstTime) {
+    firstTime = false;
+    resetDistance(); 
+    targetAngle = gyro.getAngleZ() + (TURN_90 * turnDirection());
+    encoderLeft.moveTo(TICKS_FOR_90 * turnDirection());
+    encoderRight.moveTo(TICKS_FOR_90 * turnDirection());
+  }
+
+  if (!encoderLeft.isTarPosReached() || !encoderRight.isTarPosReached()) {
+    return;
+  }
+  
+  bool transition = turn(targetAngle);
+
+  if (transition) {
+    Serial.println("SORTIE PIVOT A");
+
+    firstTime = true;
+    currentState = SEG_C;
+  }
 }
 
 void segCState() {
+  
 }
 
 void pivotCState() {
