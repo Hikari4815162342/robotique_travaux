@@ -19,7 +19,6 @@ const double DIAMETER = 6.5;
 const int TICK_TOUR = PULSE * RATIO;
 const double CIRC_WHEEL = PI * DIAMETER;
 const double CIRC_ROBOT = 48.7;
-int speed = 100;
 
 const double QUARTER = CIRC_ROBOT / 4.0;
 const double NB_TOURS = QUARTER / CIRC_WHEEL;
@@ -27,6 +26,7 @@ const double TICKS_FOR_90 = NB_TOURS * TICK_TOUR;
 
 const int TURN_90 = 90;
 const int TURN_180 = 180;
+int speed = 100;
 
 const int DA = 2280684;
 unsigned long currentTime = 0;
@@ -51,6 +51,7 @@ MeUltrasonicSensor distSensor(PORT_6);
 MeGyro gyro(0, 0x69);
 
 double distance = 0;
+int ledsDone = LEDNUM;
 
 void rightEncoderInterrupt(void) {
   if (digitalRead(encoderRight.getPortB()) == 0) {
@@ -208,7 +209,7 @@ void stateManager(unsigned long ct) {
       pivotCState();
       break;
     case END:
-      endState();
+      endState(ct);
       break;
   }
 }
@@ -271,7 +272,7 @@ void segAState() {
 
   goStraight();
 
-  int toGo = 3 * 59;
+  int toGo = 2 * 59;
   double distance = toGo / CIRC_WHEEL * TICK_TOUR;
   float progression = getLedProgressionA(distance);
   int nbLeds = round(progression * LED_TOGO);
@@ -287,8 +288,9 @@ void segAState() {
   if (transition) {
     Serial.println("SORTIE SEGMENT A");
     stopMotors();
-    led.setColor(LEDNUM, 0, 200, 0);
+    led.setColor(ledsDone--, 0, 200, 0);
     led.show();
+    
     firstTime = true;
     currentState = PIVOT_A;
   }
@@ -319,7 +321,8 @@ bool turn(double goal) {
   static double error = 0.0;
   static double previousError = 0.0;
   static double output = 0;
-  int stop = 3;
+  int stop = 1;
+  int minSpeed = speed / 2;
 
   const double kp = 2.75;
   const double kd = 1.0;
@@ -334,6 +337,10 @@ bool turn(double goal) {
     stopMotors();
     return true;
   } else {
+    if (output < minSpeed){
+      output = minSpeed * turnDirection();
+    }
+
     encoderLeft.setTarPWM(output);
     encoderRight.setTarPWM(output);
     return false;
@@ -416,7 +423,7 @@ void segBState() {
   if (transition){
     Serial.println("SORTIE SEGMENT B");
     stopMotors();
-    led.setColor(LEDNUM - 1, 0, 200, 0);
+    led.setColor(ledsDone--, 0, 200, 0);
     led.show();
 
     firstTime = true;
@@ -480,7 +487,7 @@ void segCState() {
   if (transition) {
     Serial.println("SORTIE SEGMENT C");
     stopMotors();
-    led.setColor(LEDNUM - 2, 0, 200, 0);
+    led.setColor(ledsDone--, 0, 200, 0);
     led.show();
     firstTime = true;
     currentState = PIVOT_C;
@@ -488,7 +495,41 @@ void segCState() {
 }
 
 void pivotCState() {
+  static bool firstTime = true;
+  static double targetAngle = 0.0;
+  if (firstTime) {
+    firstTime = false;
+    shutProgressionLeds();
+    resetDistance(); 
+    targetAngle = gyro.getAngleZ() + (TURN_180 * turnDirection());
+    encoderLeft.moveTo((2 * TICKS_FOR_90) * turnDirection());
+    encoderRight.moveTo((2 * TICKS_FOR_90) * turnDirection());
+  }
+
+  if (!encoderLeft.isTarPosReached() || !encoderRight.isTarPosReached()) {
+    return;
+  }
+  
+  bool transition = turn(targetAngle);
+
+  if (transition) {
+    firstTime = true;
+    currentState = END;
+  }
 }
 
-void endState() {
+void endState(unsigned long ct) {
+  static unsigned long lastTime = 0;
+  int rate = 100;
+
+  if (ct - lastTime >= rate){
+    lastTime = ct;
+    for(int i = 8; i <= LEDNUM; i++){
+      led.setColor(i, 0, 200, 0);
+    }
+    led.show();
+  }else{
+    shutAllLeds();
+  }
+
 }
