@@ -345,6 +345,7 @@ void pivotAState() {
   static double targetAngle = 0.0;
   if (firstTime) {
     firstTime = false;
+    shutProgressionLeds();
     resetDistance(); 
     targetAngle = gyro.getAngleZ() + (TURN_90 * turnDirection());
     encoderLeft.moveTo(TICKS_FOR_90 * turnDirection());
@@ -392,6 +393,7 @@ void segBState() {
   if (firstTime) {
     Serial.println("ENTRÉE SEGMENT B");
     resetDistance();
+    shutProgressionLeds();
     startDistance = distance;
     goStraight(speed, 1);
 
@@ -427,6 +429,7 @@ void pivotBState() {
   static double targetAngle = 0.0;
   if (firstTime) {
     firstTime = false;
+    shutProgressionLeds();
     resetDistance(); 
     targetAngle = gyro.getAngleZ() + (TURN_90 * turnDirection());
     encoderLeft.moveTo(TICKS_FOR_90 * turnDirection());
@@ -448,7 +451,40 @@ void pivotBState() {
 }
 
 void segCState() {
-  
+  static bool firstTime = true;
+
+  if (firstTime) {
+    Serial.println("ENTRÉE SEGMENT C");
+    shutProgressionLeds();
+    resetDistance();
+    goStraight(100, 1);
+
+    firstTime = false;
+  }
+
+  goStraight();
+
+  int toGo = 2 * 59;
+  double distance = toGo / CIRC_WHEEL * TICK_TOUR;
+  float progression = getLedProgressionA(distance);
+  int nbLeds = round(progression * LED_TOGO);
+
+  for (int i = 1; i <= nbLeds; i++) {
+    led.setColor(i, 50, 50, 50);
+  }
+  led.show();
+
+  long avgPosition = (abs(encoderLeft.getPulsePos()) + abs(encoderRight.getPulsePos())) / 2;
+
+  bool transition = avgPosition >= distance;
+  if (transition) {
+    Serial.println("SORTIE SEGMENT C");
+    stopMotors();
+    led.setColor(LEDNUM - 2, 0, 200, 0);
+    led.show();
+    firstTime = true;
+    currentState = PIVOT_C;
+  }
 }
 
 void pivotCState() {
