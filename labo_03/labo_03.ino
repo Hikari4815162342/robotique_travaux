@@ -26,7 +26,11 @@ const double TICKS_FOR_90 = NB_TOURS * TICK_TOUR;
 
 const int TURN_90 = 90;
 const int TURN_180 = 180;
-int speed = 100;
+int defaultSpeed = 100;
+int turnSpeed = 75;
+int toGo = 90;
+const int MIN_PWM = 35;
+const int MAX_PWM = 255;
 
 const int DA = 2280684;
 unsigned long currentTime = 0;
@@ -49,6 +53,8 @@ MeEncoderOnBoard encoderRight(SLOT1);
 MeEncoderOnBoard encoderLeft(SLOT2);
 MeUltrasonicSensor distSensor(PORT_6);
 MeGyro gyro(0, 0x69);
+
+double zAngle = 0.0;
 
 double distance = 0;
 int ledsDone = LEDNUM;
@@ -94,37 +100,6 @@ void encoderSetup() {
   encoderLeft.setSpeedPid(0.18, 0, 0);
 }
 
-
-void goStraight(short speed = 100, short firstRun = 0) {
-  static double zAngleGoal = 0.0;
-
-  static double error = 0.0;
-  static double previousError = 0.0;
-  static double output = 0;
-
-  const double kp = 4.0;
-  const double kd = 1.0;
-
-  if (firstRun) {
-    firstRun = 0;
-
-    zAngleGoal = gyro.getAngleZ();
-
-    encoderLeft.setTarPWM(speed);
-    encoderRight.setTarPWM(-speed);
-
-    return;
-  }
-
-  error = gyro.getAngleZ() - zAngleGoal;
-
-  output = kp * error + kd * (error - previousError);
-
-  previousError = error;
-
-  encoderLeft.setTarPWM(speed - output);
-  encoderRight.setTarPWM(-speed - output);
-}
 void shutAllLeds() {
   led.setColor(0, 0, 0);
   led.show();
@@ -153,9 +128,31 @@ void loop() {
   currentTime = millis();
   distance = getDistance(currentTime);
   printAngle(currentTime);
-  gyro.update();
+  gyroTask(currentTime);
   stateManager(currentTime);
   encodersTask();
+}
+
+void gyroTask(unsigned long ct){
+  static double previousZ = 0.0;
+  static bool firstTime = true;
+
+  gyro.update();
+  double z = gyro.getAngleZ();
+
+  if (firstTime) {
+    firstTime = false;
+    previousZ = z;
+    return;
+  }
+
+  double delta = z - previousZ;
+
+  if (delta > 180) delta -= 360;
+  else if (delta < -180) delta += 360;
+
+  zAngle += delta;
+  previousZ = z;
 }
 
 void printAngle(unsigned long ct) {
@@ -173,7 +170,7 @@ void printAngle(unsigned long ct) {
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
   display.print("Angle: ");
-  display.print(gyro.getAngleZ());
+  display.print(zAngle);
   display.print(" ---  Distance: ");
   display.print(distance);
   display.println(" cm");
@@ -194,19 +191,19 @@ void stateManager(unsigned long ct) {
       segAState();
       break;
     case PIVOT_A:
-      pivotAState();
+      pivotAState(ct);
       break;
     case SEG_B:
       segBState();
       break;
     case PIVOT_B:
-      pivotBState();
+      pivotBState(ct);
       break;
     case SEG_C:
       segCState();
       break;
     case PIVOT_C:
-      pivotCState();
+      pivotCState(ct);
       break;
     case END:
       endState(ct);
@@ -229,6 +226,8 @@ void resetDistance() {
 void stopMotors() {
   encoderLeft.setTarPWM(0);
   encoderRight.setTarPWM(0);
+  encoderLeft.setMotorPwm(0);
+  encoderRight.setMotorPwm(0);
 }
 
 float getLedProgressionA(double distance) {
@@ -259,20 +258,48 @@ void setupState(unsigned long ct) {
   }
 }
 
+void goStraight(short speed = 100, short firstRun = 0) {
+  static double zAngleGoal = 0.0;
+
+  static double previousError = 0.0;
+
+  const double kp = 4.0;
+  const double kd = 1.0;
+
+  if (firstRun) {
+    firstRun = 0;
+
+    zAngleGoal = zAngle;
+
+    encoderLeft.setTarPWM(speed);
+    encoderRight.setTarPWM(-speed);
+
+    return;
+  }
+
+  double error = zAngle - zAngleGoal;
+
+  double output = kp * error + kd * (error - previousError);
+
+  previousError = error;
+
+  encoderLeft.setTarPWM(speed - output);
+  encoderRight.setTarPWM(-speed - output);
+}
+
 void segAState() {
   static bool firstTime = true;
 
   if (firstTime) {
     Serial.println("ENTRÉE SEGMENT A");
     resetDistance();
-    goStraight(100, 1);
+    goStraight(defaultSpeed, 1);
 
     firstTime = false;
   }
 
   goStraight();
 
-  int toGo = 2 * 59;
   double distance = toGo / CIRC_WHEEL * TICK_TOUR;
   float progression = getLedProgressionA(distance);
   int nbLeds = round(progression * LED_TOGO);
@@ -317,53 +344,78 @@ int turnDirection() {
   return dir;
 }
 
-bool turn(double goal) {
-  static double error = 0.0;
+int limitSpeed(float value, int maxSpeed) {
+  value = constrain(value, -maxSpeed, maxSpeed);
+
+  if (fabs(value) < MIN_PWM) {
+    value = value < 0 ? -MIN_PWM : MIN_PWM;
+  }
+
+  return (int)value;
+}
+
+bool turn(unsigned long ct, float goal, int speed = 100, bool init = false) {
+  static unsigned long lastTime = 0;
+  const unsigned long rate = 20;
+
+  static double zAngleGoal = 0.0;
   static double previousError = 0.0;
-  static double output = 0;
-  int stop = 1;
-  int minSpeed = speed / 2;
+  static double errorSum = 0.0;
+  float stop = 1.0;
 
-  const double kp = 2.75;
-  const double kd = 1.0;
+  const double kp = 3.0;
+  const double ki = 1.0;
+  const double kd = 4.0;
 
-  error = goal - gyro.getAngleZ();
+  if (init) {
+    lastTime = ct;
+    errorSum = 0.0;
+    zAngleGoal = zAngle + goal;
+    previousError = goal;
 
-  output = kp * error + kd * (error - previousError);
+    return false;
+  }
+
+  if (ct - lastTime < rate) return false;
+  
+  lastTime = ct;
+
+  double error = zAngleGoal - zAngle;
+  if (fabs(error) <= stop) {
+    stopMotors();
+    return true;
+  } 
+
+  errorSum += error;
+
+  double output = kp * error + ki * errorSum + kd * (error - previousError);
 
   previousError = error;
 
-  if (abs(error) <= stop) {
-    stopMotors();
-    return true;
-  } else {
-    if (output < minSpeed){
-      output = minSpeed * turnDirection();
-    }
-
-    encoderLeft.setTarPWM(output);
-    encoderRight.setTarPWM(output);
-    return false;
-  }
+  int pivotSpeed = limitSpeed(output, speed);
+  
+  encoderLeft.setTarPWM(pivotSpeed);
+  encoderRight.setTarPWM(pivotSpeed);
+  
+  return false;
 }
 
-void pivotAState() {
+void pivotAState(unsigned long ct) {
   static bool firstTime = true;
-  static double targetAngle = 0.0;
+  static float targetAngle = 0.0;
+  static int targetSpeed = 0;
+
   if (firstTime) {
     firstTime = false;
     shutProgressionLeds();
     resetDistance(); 
-    targetAngle = gyro.getAngleZ() + (TURN_90 * turnDirection());
-    encoderLeft.moveTo(TICKS_FOR_90 * turnDirection());
-    encoderRight.moveTo(TICKS_FOR_90 * turnDirection());
+    targetAngle = TURN_90 * turnDirection();
+    targetSpeed = constrain(turnSpeed, MIN_PWM, MAX_PWM);
+
+    turn(ct, targetAngle, targetSpeed, true);
   }
 
-  if (!encoderLeft.isTarPosReached() || !encoderRight.isTarPosReached()) {
-    return;
-  }
-  
-  bool transition = turn(targetAngle);
+  bool transition = turn(ct, targetAngle, targetSpeed);
 
   if (transition) {
     Serial.println("SORTIE PIVOT A");
@@ -393,8 +445,8 @@ double getDistance(unsigned long ct){
 void segBState() {
   static bool firstTime = true;
   double slowDownDist = 45.0;
-  double stopDist = 35.0;
-  int slowSpeed = speed / 2;
+  double stopDist = 32.00;
+  int slowSpeed = defaultSpeed / 2;
   static double startDistance = 0.0;
 
   if (firstTime) {
@@ -402,13 +454,13 @@ void segBState() {
     resetDistance();
     shutProgressionLeds();
     startDistance = distance;
-    goStraight(speed, 1);
+    goStraight(defaultSpeed, 1);
 
     firstTime = false;
   }
 
   if (distance > slowDownDist){
-    goStraight(speed, 0);
+    goStraight(defaultSpeed, 0);
   }else{
     goStraight(slowSpeed, 0);
   }
@@ -431,26 +483,25 @@ void segBState() {
   }
 }
 
-void pivotBState() {
+void pivotBState(unsigned long ct) {
   static bool firstTime = true;
-  static double targetAngle = 0.0;
+  static float targetAngle = 0.0;
+  static int targetSpeed = 0;
+
   if (firstTime) {
     firstTime = false;
     shutProgressionLeds();
     resetDistance(); 
-    targetAngle = gyro.getAngleZ() + (TURN_90 * turnDirection());
-    encoderLeft.moveTo(TICKS_FOR_90 * turnDirection());
-    encoderRight.moveTo(TICKS_FOR_90 * turnDirection());
+    targetAngle = TURN_90 * turnDirection();
+    targetSpeed = constrain(turnSpeed, MIN_PWM, MAX_PWM);
+
+    turn(ct, targetAngle, targetSpeed, true);
   }
 
-  if (!encoderLeft.isTarPosReached() || !encoderRight.isTarPosReached()) {
-    return;
-  }
-  
-  bool transition = turn(targetAngle);
+  bool transition = turn(ct, targetAngle, targetSpeed);
 
   if (transition) {
-    Serial.println("SORTIE PIVOT A");
+    Serial.println("SORTIE PIVOT B");
 
     firstTime = true;
     currentState = SEG_C;
@@ -471,7 +522,6 @@ void segCState() {
 
   goStraight();
 
-  int toGo = 2 * 59;
   double distance = toGo / CIRC_WHEEL * TICK_TOUR;
   float progression = getLedProgressionA(distance);
   int nbLeds = round(progression * LED_TOGO);
@@ -494,25 +544,26 @@ void segCState() {
   }
 }
 
-void pivotCState() {
+void pivotCState(unsigned long ct) {
   static bool firstTime = true;
-  static double targetAngle = 0.0;
+  static float targetAngle = 0.0;
+  static int targetSpeed = 0;
+
   if (firstTime) {
     firstTime = false;
     shutProgressionLeds();
     resetDistance(); 
-    targetAngle = gyro.getAngleZ() + (TURN_180 * turnDirection());
-    encoderLeft.moveTo((2 * TICKS_FOR_90) * turnDirection());
-    encoderRight.moveTo((2 * TICKS_FOR_90) * turnDirection());
+    targetAngle = TURN_180 * turnDirection();
+    targetSpeed = constrain(turnSpeed, MIN_PWM, MAX_PWM);
+
+    turn(ct, targetAngle, targetSpeed, true);
   }
 
-  if (!encoderLeft.isTarPosReached() || !encoderRight.isTarPosReached()) {
-    return;
-  }
-  
-  bool transition = turn(targetAngle);
+  bool transition = turn(ct, targetAngle, targetSpeed);
 
   if (transition) {
+    Serial.println("SORTIE PIVOT C");
+
     firstTime = true;
     currentState = END;
   }
