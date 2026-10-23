@@ -28,7 +28,7 @@ const int TURN_90 = 90;
 const int TURN_180 = 180;
 int defaultSpeed = 100;
 int turnSpeed = 60;
-int toGo = 90;
+int toGo = 120;
 const int MIN_PWM = 35;
 const int MAX_PWM = 255;
 
@@ -556,15 +556,20 @@ void pivotCState(unsigned long ct) {
 void endState(unsigned long ct) {
   static unsigned long lastTime = 0;
   int rate = 100;
+  static bool ledState = false;
 
   if (ct - lastTime >= rate){
     lastTime = ct;
     for(int i = 8; i <= LEDNUM; i++){
-      led.setColor(i, 0, 200, 0);
+      if (ledState){
+        led.setColor(i, 0, 200, 0);
+      }else{
+        shutAllLeds();
+      }
+      
     }
     led.show();
-  }else{
-    shutAllLeds();
+    ledState = !ledState;
   }
 
 }
