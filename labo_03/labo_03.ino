@@ -27,7 +27,7 @@ const double TICKS_FOR_90 = NB_TOURS * TICK_TOUR;
 const int TURN_90 = 90;
 const int TURN_180 = 180;
 int defaultSpeed = 100;
-int turnSpeed = 75;
+int turnSpeed = 60;
 int toGo = 90;
 const int MIN_PWM = 35;
 const int MAX_PWM = 255;
@@ -124,7 +124,6 @@ void setup() {
 }
 
 void loop() {
-  //Serial.println(gyro.getAngleZ());
   currentTime = millis();
   distance = getDistance(currentTime);
   printAngle(currentTime);
@@ -170,10 +169,7 @@ void printAngle(unsigned long ct) {
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
   display.print("Angle: ");
-  display.print(zAngle);
-  display.print(" ---  Distance: ");
-  display.print(distance);
-  display.println(" cm");
+  display.println(zAngle);
   display.display();
 }
 
@@ -244,15 +240,12 @@ void setupState(unsigned long ct) {
   static bool firstTime = true;
 
   if (firstTime) {
-    Serial.println("ENTRÉE SETUP");
     exitTime = ct + rate;
     firstTime = false;
   }
 
   bool transition = ct > exitTime;
   if (transition) {
-    Serial.println("SORTIE SETUP");
-
     firstTime = true;
     currentState = SEG_A;
   }
@@ -291,7 +284,6 @@ void segAState() {
   static bool firstTime = true;
 
   if (firstTime) {
-    Serial.println("ENTRÉE SEGMENT A");
     resetDistance();
     goStraight(defaultSpeed, 1);
 
@@ -313,7 +305,6 @@ void segAState() {
 
   bool transition = avgPosition >= distance;
   if (transition) {
-    Serial.println("SORTIE SEGMENT A");
     stopMotors();
     led.setColor(ledsDone--, 0, 200, 0);
     led.show();
@@ -363,9 +354,9 @@ bool turn(unsigned long ct, float goal, int speed = 100, bool init = false) {
   static double errorSum = 0.0;
   float stop = 1.0;
 
-  const double kp = 3.0;
-  const double ki = 1.0;
-  const double kd = 4.0;
+  const double kp = 2.0;
+  const double ki = 0.5;
+  const double kd = 5.0;
 
   if (init) {
     lastTime = ct;
@@ -418,7 +409,6 @@ void pivotAState(unsigned long ct) {
   bool transition = turn(ct, targetAngle, targetSpeed);
 
   if (transition) {
-    Serial.println("SORTIE PIVOT A");
 
     firstTime = true;
     currentState = SEG_B;
@@ -450,7 +440,6 @@ void segBState() {
   static double startDistance = 0.0;
 
   if (firstTime) {
-    Serial.println("ENTRÉE SEGMENT B");
     resetDistance();
     shutProgressionLeds();
     startDistance = distance;
@@ -473,7 +462,6 @@ void segBState() {
 
   bool transition = distance <= stopDist;
   if (transition){
-    Serial.println("SORTIE SEGMENT B");
     stopMotors();
     led.setColor(ledsDone--, 0, 200, 0);
     led.show();
@@ -501,7 +489,6 @@ void pivotBState(unsigned long ct) {
   bool transition = turn(ct, targetAngle, targetSpeed);
 
   if (transition) {
-    Serial.println("SORTIE PIVOT B");
 
     firstTime = true;
     currentState = SEG_C;
@@ -512,7 +499,6 @@ void segCState() {
   static bool firstTime = true;
 
   if (firstTime) {
-    Serial.println("ENTRÉE SEGMENT C");
     shutProgressionLeds();
     resetDistance();
     goStraight(100, 1);
@@ -535,7 +521,6 @@ void segCState() {
 
   bool transition = avgPosition >= distance;
   if (transition) {
-    Serial.println("SORTIE SEGMENT C");
     stopMotors();
     led.setColor(ledsDone--, 0, 200, 0);
     led.show();
@@ -562,7 +547,6 @@ void pivotCState(unsigned long ct) {
   bool transition = turn(ct, targetAngle, targetSpeed);
 
   if (transition) {
-    Serial.println("SORTIE PIVOT C");
 
     firstTime = true;
     currentState = END;
