@@ -18,11 +18,6 @@ const double RATIO = 39.267;
 const double DIAMETER = 6.5;
 const int TICK_TOUR = PULSE * RATIO;
 const double CIRC_WHEEL = PI * DIAMETER;
-const double CIRC_ROBOT = 48.7;
-
-const double QUARTER = CIRC_ROBOT / 4.0;
-const double NB_TOURS = QUARTER / CIRC_WHEEL;
-const double TICKS_FOR_90 = NB_TOURS * TICK_TOUR;
 
 const int TURN_90 = 90;
 const int TURN_180 = 180;
