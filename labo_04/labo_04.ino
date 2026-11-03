@@ -37,7 +37,7 @@ const int TURN_90 = 90;
 const int TURN_180 = 180;
 int defaultSpeed = 100;
 int turnSpeed = 60;
-int toGo = 120;
+int toGo = 2 * 59;
 const int MIN_PWM = 35;
 const int MAX_PWM = 255;
 
@@ -119,6 +119,7 @@ void serialEvent(){
   if (!Serial.available()) return;
 
   receivedData = Serial.readStringUntil('\n');
+  parseData(receivedData);
 }
 
 void setup() {
@@ -144,7 +145,7 @@ void loop() {
   distance = getDistance(currentTime);
   printAngle(currentTime);
   gyroTask(currentTime);
-  //stateManagerLab3(currentTime);
+  stateManagerLab4(currentTime);
   encodersTask();
 }
 
@@ -229,7 +230,7 @@ void stateManagerLab4(unsigned long ct){
       attenteState();
       break;
     case LAB3:
-      lab3State();
+      lab3State(ct);
       break;
     case CALIB:
       calibState();
@@ -246,16 +247,25 @@ void stateManagerLab4(unsigned long ct){
   }
 }
 
-
 void parseData(String& receivedData){
   if (receivedData.length() >= 2){
     if ((uint8_t)receivedData[0] == 0xFF && (uint8_t)receivedData[1] == 0x55){
       receivedData.remove(0, 2);
-      handleCommand(receivedData);
+      receivedData.remove(receivedData.length() - 2, 2);
+      if (receivedData == "stop" || curStateLab4 == ATTENTE){
+        handleCommand(receivedData);
+      }else{
+        return;
+      }
     }
     else if (receivedData.startsWith("!!")){
       receivedData.remove(0, 2);
-      handleCommand(receivedData);
+      receivedData.remove(receivedData.length() - 1, 1);
+      if (receivedData == "stop" || curStateLab4 == ATTENTE){
+        handleCommand(receivedData);
+      }else{
+        return;
+      }
     }
     else{
       Serial.print(F("Données non reconnues : "));
@@ -275,14 +285,19 @@ void handleCommand(const String& cmd){
   int index = cmd.indexOf(',');
   if (index == -1){
     // Commande sans paramètre
-    if (cmd == "FOLLOW_LINE"){
-      currentState = FOLLOW_LINE;
+    if (cmd == "stop"){
+      stopMotors();
+      shutAllLeds();
+      curStateLab4 = ATTENTE;
     }
-    else if (cmd == "STOP"){
-      currentState = STOP;
+    else if (cmd == "lab3"){
+      curStateLab4 = LAB3;
     }
-    else {
-      currentState = ETC;
+    else if (cmd == "cal"){
+      curStateLab4 = CALIB;
+    }
+    else if (cmd == "ligne"){
+      curStateLab4 = SUIVRE_LIGNE;
     }
   }
 }
@@ -293,7 +308,7 @@ void bootState(unsigned long ct) {
   static bool firstTime = true;
 
   if (firstTime) {
-    Serial.println("État: ATTENTE");
+    Serial.println("État: BOOT");
     exitTime = ct + rate;
     firstTime = false;
   }
@@ -317,13 +332,24 @@ void attenteState(){
   bool transition = data != receivedData;
   if (transition){
     data = receivedData;
-    parseData(data);
+    firstTime = true;
   }
-
 }
 
-void lab3State(){
+void lab3State(unsigned long ct){
+  static bool firstTime = true;
+  if (firstTime){
+    Serial.println("État: LAB3");
+    firstTime = false;
+  }
 
+  stateManagerLab3(ct);
+
+  bool transition = done;
+  if (transition){
+    firstTime = true;
+    curStateLab4 = ATTENTE;
+  }
 }
 
 void calibState(){
