@@ -23,7 +23,7 @@ const int TURN_90 = 90;
 const int TURN_180 = 180;
 int defaultSpeed = 100;
 int turnSpeed = 60;
-int toGo = 120;
+int toGo = 2 * 59;
 const int MIN_PWM = 35;
 const int MAX_PWM = 255;
 
