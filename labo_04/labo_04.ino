@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Adafruit_seesaw.h>
 enum StateLab3 { 
   SEG_A,
   PIVOT_A,
@@ -69,12 +70,22 @@ double zAngle = 0.0;
 double distance = 0;
 int ledsDone = LEDNUM;
 
+#define NB_IR 5
+bool isCalibrated = false;
+Adafruit_seesaw ss;
+struct Sensor{
+  int minVal = 1023;
+  int maxVal = 0;
+  int value;
+  int normalizedValue;
+};
+Sensor sensors[NB_IR];
+
 void rightEncoderInterrupt(void) {
   if (digitalRead(encoderRight.getPortB()) == 0) {
     encoderRight.pulsePosMinus();
   } else {
     encoderRight.pulsePosPlus();
-    ;
   }
 }
 
@@ -138,6 +149,12 @@ void setup() {
 
   display.clearDisplay();
   display.display();
+
+  if (!ss.begin()) {
+    Serial.println("Erreur de connexion au LyneTracker");
+    while (1);
+  }
+  Serial.println("Connexion réussie au LyneTracker!");
 }
 
 void loop() {
@@ -147,6 +164,18 @@ void loop() {
   gyroTask(currentTime);
   stateManagerLab4(currentTime);
   encodersTask();
+}
+
+void calibrate(){
+  for (int i = 0; i < NB_IR; i++) {
+    sensors[i].value = ss.analogRead(i);
+    if (sensors[i].value < sensors[i].minVal){
+      sensors[i].minVal = sensors[i].value;
+    }
+    if (sensors[i].value > sensors[i].maxVal){
+      sensors[i].maxVal = sensors[i].value;
+    }
+  }
 }
 
 void gyroTask(unsigned long ct){
@@ -233,7 +262,7 @@ void stateManagerLab4(unsigned long ct){
       lab3State(ct);
       break;
     case CALIB:
-      calibState();
+      calibState(ct);
       break;
     case SUIVRE_LIGNE:
       suivreLigneState();
@@ -257,6 +286,7 @@ void parseData(String& receivedData){
       }else{
         return;
       }
+      
     }
     else if (receivedData.startsWith("!!")){
       receivedData.remove(0, 2);
@@ -284,88 +314,22 @@ void parseData(String& receivedData){
 void handleCommand(const String& cmd){
   int index = cmd.indexOf(',');
   if (index == -1){
-    // Commande sans paramètre
     if (cmd == "stop"){
       stopMotors();
       shutAllLeds();
       curStateLab4 = ATTENTE;
-    }
-    else if (cmd == "lab3"){
+    }else if (cmd == "lab3"){
       curStateLab4 = LAB3;
-    }
-    else if (cmd == "cal"){
+    }else if (cmd == "cal"){
       curStateLab4 = CALIB;
-    }
-    else if (cmd == "ligne"){
+    }else if (cmd == "ligne" && !isCalibrated){
+      curStateLab4 = NON_CALIB;
+    }else if (cmd == "ligne"){
       curStateLab4 = SUIVRE_LIGNE;
-    }
+    }else{
+      curStateLab4 = CMD_INVALIDE;
+    } 
   }
-}
-
-void bootState(unsigned long ct) {
-  static unsigned long exitTime = 0;
-  int rate = 3000;
-  static bool firstTime = true;
-
-  if (firstTime) {
-    Serial.println("État: BOOT");
-    exitTime = ct + rate;
-    firstTime = false;
-  }
-
-  bool transition = ct > exitTime;
-  if (transition) {
-    firstTime = true;
-    curStateLab4 = ATTENTE;
-  }
-}
-
-void attenteState(){
-  static bool firstTime = true;
-  if (firstTime){
-    Serial.println("État: ATTENTE");
-    firstTime = false;
-    done = false;
-  }
-
-  static String data = "";
-  bool transition = data != receivedData;
-  if (transition){
-    data = receivedData;
-    firstTime = true;
-  }
-}
-
-void lab3State(unsigned long ct){
-  static bool firstTime = true;
-  if (firstTime){
-    Serial.println("État: LAB3");
-    firstTime = false;
-  }
-
-  stateManagerLab3(ct);
-
-  bool transition = done;
-  if (transition){
-    firstTime = true;
-    curStateLab4 = ATTENTE;
-  }
-}
-
-void calibState(){
-
-}
-
-void suivreLigneState(){
-
-}
-
-void cmdInvalideState(){
-
-}
-
-void nonCalibState(){
-
 }
 
 void shutProgressionLeds() {
@@ -493,14 +457,14 @@ int limitSpeed(float value, int maxSpeed) {
   return (int)value;
 }
 
-bool turn(unsigned long ct, float goal, int speed = 100, bool init = false) {
+bool turn(unsigned long ct, float goal, int speed = 50, bool init = false) {
   static unsigned long lastTime = 0;
   const unsigned long rate = 20;
 
   static double zAngleGoal = 0.0;
   static double previousError = 0.0;
   static double errorSum = 0.0;
-  float stop = 1.0;
+  float stop = 2.0;
 
   const double kp = 2.0;
   const double ki = 0.5;
@@ -741,3 +705,163 @@ void endState(unsigned long ct) {
     done = true;
   }
 }
+
+
+void bootState(unsigned long ct) {
+  static unsigned long exitTime = 0;
+  int rate = 3000;
+  static bool firstTime = true;
+
+  if (firstTime) {
+    Serial.println("État: BOOT");
+    exitTime = ct + rate;
+    firstTime = false;
+  }
+
+  bool transition = ct > exitTime;
+  if (transition) {
+    firstTime = true;
+    curStateLab4 = ATTENTE;
+  }
+}
+
+void attenteState(){
+  static bool firstTime = true;
+  if (firstTime){
+    Serial.println("État: ATTENTE");
+    firstTime = false;
+    done = false;
+  }
+
+  static String data = "";
+  bool transition = data != receivedData;
+  if (transition){
+    data = receivedData;
+    firstTime = true;
+  }
+}
+
+void lab3State(unsigned long ct){
+  static bool firstTime = true;
+  if (firstTime){
+    Serial.println("État: LAB3");
+    firstTime = false;
+    curStateLab3 = SEG_A;
+  }
+
+  stateManagerLab3(ct);
+
+  bool transitionDone = done;
+  if (transitionDone){
+    firstTime = true;
+    curStateLab4 = ATTENTE;
+  }
+
+  bool transitionStop = receivedData == "stop";
+  if (transitionStop){
+    firstTime = true;
+  }
+}
+
+void calibState(unsigned long ct){
+  static bool firstTime = true;
+  int completeTurn = 360;
+  int speed = 60;
+
+  if (firstTime){
+    Serial.println("État: CALIB");
+    firstTime = false;
+    isCalibrated = false;
+    turn(ct, completeTurn, speed, true);
+  }
+
+  calibrate();
+
+  bool transitionTurn = turn(ct, completeTurn, speed);
+  if (transitionTurn){
+    firstTime = true;
+    isCalibrated = true;
+    curStateLab4 = ATTENTE;
+  }
+}
+
+int readNormalizedSensor(int index){
+  return ((sensors[index].value - sensors[index].minVal) * 1.0) / (sensors[index].maxVal - sensors[index].minVal) * 1000.0;
+}
+
+void normalizeValues(){
+  for (int i = 0; i < NB_IR; i++){
+    sensors[i].value = ss.analogRead(i);
+    sensors[i].normalizedValue = readNormalizedSensor(i);
+  }
+}
+
+float getLinePosition(){
+  float numerator = 0;
+  float denominator = 0;
+
+  for (int i = 0; i < NB_IR; i++){
+    numerator += sensors[i].normalizedValue * (i - 2);
+    denominator += sensors[i].normalizedValue;
+  }
+
+  return numerator / denominator * 1000;
+}
+
+float computePID(float position, float consigne = 0.0f) {
+    static float kp = 0.2;
+    static float ki = 0.03; 
+    static float kd = 0.03; 
+
+    static float integral = 0;
+    static float derivative = 0;
+    static float lastError = 0;
+
+    float error = position - consigne;
+
+    integral += error;
+
+    // Adapter cette valeur selon les besoins de votre application
+    const float integralLimit = 1000;
+
+    // Limiter l'intégrale pour éviter l'emballement intégral
+    integral = constrain(integral, -integralLimit, integralLimit);
+
+    derivative = error - lastError;
+    lastError = error;
+
+    float output = kp * error + ki * integral + kd * derivative;
+
+    return output;
+}
+
+void followLine(float adjustment, int speed = 60){
+  encoderLeft.setTarPWM(speed - adjustment);
+  encoderRight.setTarPWM(-speed - adjustment);
+}
+
+void suivreLigneState(){ 
+  static bool firstTime = true;
+  if (firstTime){
+    Serial.println("État: SUIVRE_LIGNE");
+    firstTime = false;
+  }
+
+  float consigne = 0.0f;
+  normalizeValues();
+
+  float position = getLinePosition();
+
+  float adjustment = computePID(position, consigne);
+
+  followLine(adjustment);
+}
+
+void cmdInvalideState(){
+
+}
+
+void nonCalibState(){
+
+}
+
