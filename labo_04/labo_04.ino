@@ -873,7 +873,7 @@ float computePID(float position, float consigne = 0.0f) {
     return output;
 }
 
-void followLine(float adjustment, int speed = 40){
+void followLine(float adjustment, int speed = 50){
   encoderLeft.setTarPWM(speed - adjustment);
   encoderRight.setTarPWM(-speed - adjustment);
 }
