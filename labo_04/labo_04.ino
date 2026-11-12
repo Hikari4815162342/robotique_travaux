@@ -21,7 +21,9 @@ enum StateLab4 {
   CALIB,
   SUIVRE_LIGNE,
   CMD_INVALIDE,
-  NON_CALIB
+  NON_CALIB,
+  TURN_LINE,
+  SEARCH_LINE
 };
 StateLab4 curStateLab4 = BOOT;
 
@@ -162,19 +164,21 @@ void loop() {
   distance = getDistance(currentTime);
   printAngle(currentTime);
   gyroTask(currentTime);
+  sensorsTask(currentTime);
   stateManagerLab4(currentTime);
   encodersTask();
 }
 
-void calibrate(){
-  for (int i = 0; i < NB_IR; i++) {
+void sensorsTask(unsigned long ct){
+  static unsigned long lt = 0;
+  int rate = 10;
+
+  if (ct - lt < rate) return;
+
+  lt = ct;
+
+  for (int i = 0; i < NB_IR; i++){
     sensors[i].value = ss.analogRead(i);
-    if (sensors[i].value < sensors[i].minVal){
-      sensors[i].minVal = sensors[i].value;
-    }
-    if (sensors[i].value > sensors[i].maxVal){
-      sensors[i].maxVal = sensors[i].value;
-    }
   }
 }
 
@@ -265,13 +269,19 @@ void stateManagerLab4(unsigned long ct){
       calibState(ct);
       break;
     case SUIVRE_LIGNE:
-      suivreLigneState();
+      suivreLigneState(ct);
       break;
     case CMD_INVALIDE:
       cmdInvalideState();
       break;
     case NON_CALIB:
       nonCalibState();
+      break;
+    case TURN_LINE:
+      turnLineState(ct);
+      break;
+    case SEARCH_LINE:
+      searchLineState(ct);
       break;
   }
 }
@@ -763,6 +773,17 @@ void lab3State(unsigned long ct){
   }
 }
 
+void calibrate(){
+  for (int i = 0; i < NB_IR; i++) {
+    if (sensors[i].value < sensors[i].minVal){
+      sensors[i].minVal = sensors[i].value;
+    }
+    if (sensors[i].value > sensors[i].maxVal){
+      sensors[i].maxVal = sensors[i].value;
+    }
+  }
+}
+
 void calibState(unsigned long ct){
   static bool firstTime = true;
   int completeTurn = 360;
@@ -791,7 +812,6 @@ int readNormalizedSensor(int index){
 
 void normalizeValues(){
   for (int i = 0; i < NB_IR; i++){
-    sensors[i].value = ss.analogRead(i);
     sensors[i].normalizedValue = readNormalizedSensor(i);
   }
 }
@@ -805,13 +825,14 @@ float getLinePosition(){
     denominator += sensors[i].normalizedValue;
   }
 
-  return numerator / denominator * 1000;
+  float position = numerator / denominator * 1000;
+  return position;
 }
 
 float computePID(float position, float consigne = 0.0f) {
-    static float kp = 0.2;
-    static float ki = 0.03; 
-    static float kd = 0.03; 
+    static float kp = 0.35;
+    static float ki = 0.01; 
+    static float kd = 2;  
 
     static float integral = 0;
     static float derivative = 0;
@@ -821,10 +842,8 @@ float computePID(float position, float consigne = 0.0f) {
 
     integral += error;
 
-    // Adapter cette valeur selon les besoins de votre application
-    const float integralLimit = 1000;
+    const float integralLimit = MAX_PWM;
 
-    // Limiter l'intégrale pour éviter l'emballement intégral
     integral = constrain(integral, -integralLimit, integralLimit);
 
     derivative = error - lastError;
@@ -835,18 +854,62 @@ float computePID(float position, float consigne = 0.0f) {
     return output;
 }
 
-void followLine(float adjustment, int speed = 60){
+void followLine(float adjustment, int speed = 40){
   encoderLeft.setTarPWM(speed - adjustment);
   encoderRight.setTarPWM(-speed - adjustment);
 }
 
-void suivreLigneState(){ 
+bool isEndOfLine(){
+  for (int i = 0; i < NB_IR; i++){
+    int seuil = (sensors[i].minVal + sensors[i].maxVal) / 2;
+    if (sensors[i].value > seuil){
+      return false;
+    }
+  }
+  return true;
+}
+
+bool isLineLost(){
+  for (int i = 0; i < NB_IR; i++){
+    int seuil = (sensors[i].minVal + sensors[i].maxVal) / 2;
+    if (sensors[i].value < seuil){
+      return false;
+    }
+  }
+  return true;
+}
+
+void suivreLigneState(unsigned long ct){ 
   static bool firstTime = true;
+  static unsigned long lineLostTime = 0;
+  static bool lineLostTimerStarted = false;
+  int rate = 2000;
+
   if (firstTime){
     Serial.println("État: SUIVRE_LIGNE");
     firstTime = false;
   }
 
+  bool transitionLost = isLineLost();
+
+  if (transitionLost){
+    if (!lineLostTimerStarted){
+      lineLostTime = ct;
+      lineLostTimerStarted = true;
+    }
+
+    if (ct - lineLostTime >= rate){
+      curStateLab4 = SEARCH_LINE;
+      lineLostTimerStarted = false;
+      firstTime = true;
+      stopMotors();
+      return;
+    }
+  } 
+  else {
+    lineLostTimerStarted = false;
+  }
+  
   float consigne = 0.0f;
   normalizeValues();
 
@@ -855,6 +918,58 @@ void suivreLigneState(){
   float adjustment = computePID(position, consigne);
 
   followLine(adjustment);
+
+  bool transition = isEndOfLine();
+  if (transition){
+    stopMotors();
+    curStateLab4 = TURN_LINE;
+  }
+}
+
+void turnLineState(unsigned long ct){
+  static bool firstTime = true;
+  int speed = 60;
+  if (firstTime){
+    firstTime = false;
+    turn(ct, TURN_180, speed, true);
+  }
+
+
+  bool transition = turn(ct, TURN_180, speed);
+  if (transition){
+    firstTime = true;
+    curStateLab4 = SUIVRE_LIGNE;
+  }
+}
+
+void searchLineState(unsigned long ct){
+  static bool firstTime = true;
+  static unsigned long stopBackwardTime = 0;
+  if (firstTime){
+    firstTime = false;
+    stopBackwardTime = ct + 1000;
+    turn(ct, 360, 60, true);
+  }
+
+  if (ct < stopBackwardTime){
+    encoderLeft.setTarPWM(-60);
+    encoderRight.setTarPWM(60);
+  }else{
+    bool turnDone = turn(ct, 360, 60);
+    if (turnDone){
+      firstTime = true;
+      return;
+    }
+
+    for (int i = 0; i < NB_IR; i++){
+      int seuil = (sensors[i].minVal + sensors[i].maxVal) / 2;
+      if (sensors[i].value < seuil){
+        firstTime = true;
+        curStateLab4 = SUIVRE_LIGNE;
+        return;
+      }
+    }
+  }
 }
 
 void cmdInvalideState(){
