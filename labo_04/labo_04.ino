@@ -39,8 +39,8 @@ const double CIRC_WHEEL = PI * DIAMETER;
 const int TURN_90 = 90;
 const int TURN_180 = 180;
 int defaultSpeed = 100;
-int turnSpeed = 60;
-int toGo = 2 * 59;
+int turnSpeed = 55;
+int toGo = 120;
 const int MIN_PWM = 35;
 const int MAX_PWM = 255;
 
@@ -82,6 +82,12 @@ struct Sensor{
   int normalizedValue;
 };
 Sensor sensors[NB_IR];
+
+bool firstTimeLab3 = true;
+bool firstTimeCal = true;
+bool firstTimeLigne = true;
+bool firstTimeInvalide = true;
+bool firstTimeNotCalibrated = true;
 
 void rightEncoderInterrupt(void) {
   if (digitalRead(encoderRight.getPortB()) == 0) {
@@ -272,10 +278,10 @@ void stateManagerLab4(unsigned long ct){
       suivreLigneState(ct);
       break;
     case CMD_INVALIDE:
-      cmdInvalideState();
+      cmdInvalideState(ct);
       break;
     case NON_CALIB:
-      nonCalibState();
+      nonCalibState(ct);
       break;
     case TURN_LINE:
       turnLineState(ct);
@@ -323,10 +329,23 @@ void parseData(String& receivedData){
 
 void handleCommand(const String& cmd){
   int index = cmd.indexOf(',');
+  
+  if (cmd != "stop" && cmd != "lab3" && cmd != "ligne" && cmd != "cal"){
+    Serial.println("cmd INCONNUE");
+  }else{
+    Serial.print("cmd reçu : ");
+    Serial.println(cmd);
+  }
+
   if (index == -1){
     if (cmd == "stop"){
       stopMotors();
       shutAllLeds();
+      firstTimeLab3 = true;
+      firstTimeCal = true;
+      firstTimeLigne = true;
+      firstTimeInvalide = true;
+      firstTimeNotCalibrated = true;
       curStateLab4 = ATTENTE;
     }else if (cmd == "lab3"){
       curStateLab4 = LAB3;
@@ -680,12 +699,29 @@ void pivotCState(unsigned long ct) {
   }
 }
 
+void ledsBlinkTask(unsigned long ct, int rate, int red, int green, int blue, int index){
+  static bool ledState = false;
+  static unsigned long lastTime = 0;
+
+   if (ct - lastTime >= rate){
+    lastTime = ct;
+    for(int i = index; i <= LEDNUM; i++){
+      if (ledState){
+        led.setColor(i, red, green, blue);
+      }else{
+        shutAllLeds();
+      }
+      
+    }
+    led.show();
+    ledState = !ledState;
+  }
+}
+
 void endState(unsigned long ct) {
   static unsigned long exitTime = 0;
   int exitRate = 3000;
-  static unsigned long lastTime = 0;
   int rate = 100;
-  static bool ledState = false;
 
   static bool firstTime = true;
 
@@ -695,19 +731,7 @@ void endState(unsigned long ct) {
     exitTime = ct + exitRate;
   }
 
-  if (ct - lastTime >= rate){
-    lastTime = ct;
-    for(int i = 8; i <= LEDNUM; i++){
-      if (ledState){
-        led.setColor(i, 0, 200, 0);
-      }else{
-        shutAllLeds();
-      }
-      
-    }
-    led.show();
-    ledState = !ledState;
-  }
+  ledsBlinkTask(ct, rate, 0, 200, 0, 8);
 
   bool transition = ct > exitTime;
   if (transition){
@@ -752,10 +776,9 @@ void attenteState(){
 }
 
 void lab3State(unsigned long ct){
-  static bool firstTime = true;
-  if (firstTime){
+  if (firstTimeLab3){
     Serial.println("État: LAB3");
-    firstTime = false;
+    firstTimeLab3 = false;
     curStateLab3 = SEG_A;
   }
 
@@ -763,13 +786,10 @@ void lab3State(unsigned long ct){
 
   bool transitionDone = done;
   if (transitionDone){
-    firstTime = true;
+    shutAllLeds();
+    firstTimeLab3 = true;
+    done = false;
     curStateLab4 = ATTENTE;
-  }
-
-  bool transitionStop = receivedData == "stop";
-  if (transitionStop){
-    firstTime = true;
   }
 }
 
@@ -785,13 +805,12 @@ void calibrate(){
 }
 
 void calibState(unsigned long ct){
-  static bool firstTime = true;
   int completeTurn = 360;
-  int speed = 60;
+  int speed = 55;
 
-  if (firstTime){
+  if (firstTimeCal){
     Serial.println("État: CALIB");
-    firstTime = false;
+    firstTimeCal = false;
     isCalibrated = false;
     turn(ct, completeTurn, speed, true);
   }
@@ -800,7 +819,7 @@ void calibState(unsigned long ct){
 
   bool transitionTurn = turn(ct, completeTurn, speed);
   if (transitionTurn){
-    firstTime = true;
+    firstTimeCal = true;
     isCalibrated = true;
     curStateLab4 = ATTENTE;
   }
@@ -880,14 +899,13 @@ bool isLineLost(){
 }
 
 void suivreLigneState(unsigned long ct){ 
-  static bool firstTime = true;
   static unsigned long lineLostTime = 0;
   static bool lineLostTimerStarted = false;
   int rate = 2000;
 
-  if (firstTime){
+  if (firstTimeLigne){
     Serial.println("État: SUIVRE_LIGNE");
-    firstTime = false;
+    firstTimeLigne = false;
   }
 
   bool transitionLost = isLineLost();
@@ -901,7 +919,7 @@ void suivreLigneState(unsigned long ct){
     if (ct - lineLostTime >= rate){
       curStateLab4 = SEARCH_LINE;
       lineLostTimerStarted = false;
-      firstTime = true;
+      firstTimeLigne = true;
       stopMotors();
       return;
     }
@@ -928,7 +946,7 @@ void suivreLigneState(unsigned long ct){
 
 void turnLineState(unsigned long ct){
   static bool firstTime = true;
-  int speed = 60;
+  int speed = 55;
   if (firstTime){
     firstTime = false;
     turn(ct, TURN_180, speed, true);
@@ -972,11 +990,41 @@ void searchLineState(unsigned long ct){
   }
 }
 
-void cmdInvalideState(){
+void cmdInvalideState(unsigned long ct){
+  static unsigned long exitTime = 0;
+  int rate = 100;
 
+  if (firstTimeInvalide){
+    firstTimeInvalide = false;
+    exitTime = ct + 3000;
+  }
+
+  ledsBlinkTask(ct, rate, 200, 0, 0, 0);
+
+  bool transition = ct > exitTime;
+  if (transition){
+    shutAllLeds();
+    firstTimeInvalide = true;
+    curStateLab4 = ATTENTE;
+  }
 }
 
-void nonCalibState(){
+void nonCalibState(unsigned long ct){
+  static unsigned long exitTime = 0;
+  int rate = 100;
 
+  if (firstTimeNotCalibrated){
+    firstTimeNotCalibrated = false;
+    exitTime = ct + 3000;
+  }
+
+  ledsBlinkTask(ct, rate, 100, 100, 0, 0);
+
+  bool transition = ct > exitTime;
+  if (transition){
+    shutAllLeds();
+    firstTimeNotCalibrated = true;
+    curStateLab4 = ATTENTE;
+  }
 }
 
