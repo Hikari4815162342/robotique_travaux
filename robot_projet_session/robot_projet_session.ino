@@ -34,7 +34,7 @@ const double CIRC_WHEEL = PI * DIAMETER;
 
 const int TURN_90 = 90;
 const int TURN_180 = 180;
-int speed = 50;
+int speed = 60;
 const int MIN_PWM = 35;
 const int MAX_PWM = 255;
 
@@ -166,30 +166,8 @@ void parseData(String& receivedData){
   }
 }
 
-void setSpeed(int value){
-  Serial.print("j'ai exécuté p,");
-  Serial.println(value);
-
-  speed = value;
-}
-
-void forward(){
-  Serial.println("j'ai exécuté W");
-}
-
-void left(){
-  Serial.println("j'ai exécuté A");
-}
-
-void backward(){
-  Serial.println("j'ai exécuté S");
-}
-
-void right(){
-  Serial.println("j'ai exécuté D");
-}
-
 void handleCommand(const String& cmd) {
+  bool invalidCommand = false;
 
   int index = cmd.indexOf(',');
   if (index == -1) {
@@ -197,19 +175,19 @@ void handleCommand(const String& cmd) {
       klaxon();
     }
     else if (cmd == "C"){
-      Serial.print("j'ai exécuté C");
+      Serial.println("j'ai exécuté C");
       requestedState = CALIBRATION;
     }
     else if (cmd == "GO"){
-      Serial.print("j'ai exécuté GO");
+      Serial.println("j'ai exécuté GO");
       requestedState = SUIVI_DE_LIGNE;
     }
     else if (cmd == "STOP"){
-      Serial.print("j'ai exécuté STOP");
+      Serial.println("j'ai exécuté STOP");
       requestedState = ATTENTE;
     }
     else if (cmd == "MAN"){
-      Serial.print("j'ai exécuté MAN");
+      Serial.println("j'ai exécuté MAN");
       requestedState = MANUEL;
     }
     else if (currentState == MANUEL){
@@ -224,7 +202,14 @@ void handleCommand(const String& cmd) {
       }
       else if (cmd == "D"){
         right();
+      }else if (cmd == "T"){
+        stop();
+      }else{
+        invalidCommand = true;
       }
+    }
+    else{
+      invalidCommand = true;
     }
   }
   else {
@@ -267,11 +252,52 @@ void handleCommand(const String& cmd) {
       Serial.print("j'ai exécuté ");
       Serial.println(cmd);
     }
+    else {
+      invalidCommand = true;
+    }
+  }
+
+  if (invalidCommand){
+    Serial.println("Commande invalide");
   }
 }
 
 void klaxon(){
   Serial.println("j'ai exécuté E");
+}
+
+void setSpeed(int value){
+  Serial.print("j'ai exécuté p,");
+  Serial.println(value);
+
+  if (value < 50){
+    value = 50;
+  }
+  else if (value > 255){
+    value = 255;
+  }
+
+  speed = value;
+}
+
+void forward(){
+  Serial.println("j'ai exécuté W");
+}
+
+void left(){
+  Serial.println("j'ai exécuté A");
+}
+
+void backward(){
+  Serial.println("j'ai exécuté S");
+}
+
+void right(){
+  Serial.println("j'ai exécuté D");
+}
+
+void stop(){
+  Serial.println("j'ai exécuté T");
 }
 
 void encodersTask() {
@@ -469,15 +495,19 @@ void calibrationState(unsigned long ct){
   static bool firstTime = true;
 
   if (firstTime){
+    speed = 60;
     Serial.print("État: ");
     Serial.println(currentState);
     turn(ct, completeTurn, true);
+    firstTime = false;
   }
 
   calibrate();
 
   bool transitionTurn = turn(ct, completeTurn);
   if (transitionTurn){
+    firstTime = true;
+    requestedState = ATTENTE;
     currentState = ATTENTE;
   }
 }
@@ -556,9 +586,10 @@ void followLine(){
 
 void suiviDeLigneState(){ 
   static bool firstTime = true;
-  int distanceThreshold = 30;
+  int distanceThreshold = 50;
 
   if (firstTime){
+    speed = 50;
     Serial.print("État: ");
     Serial.println(currentState);
     firstTime = false;
@@ -566,14 +597,16 @@ void suiviDeLigneState(){
 
   followLine();
 
-  bool transitionObjet = distance <= distanceThreshold;
-  if (transitionObjet){
+  bool transitionAttentif = distance <= distanceThreshold;
+  if (transitionAttentif){
+    firstTime = true;
     currentState = ATTENTIF;
   }
 
   bool transitionStop = requestedState == ATTENTE;
   if (transitionStop){
     stopMotors();
+    firstTime = true;
     currentState = requestedState;
   }
 }
@@ -584,6 +617,7 @@ void approcheDuColisState(){}
 void demiTourState(unsigned long ct){
   static bool firstTime = true;
   if (firstTime){
+    speed = 60;
     Serial.print("État: ");
     Serial.println(currentState);
     firstTime = false;
@@ -596,8 +630,14 @@ void demiTourState(unsigned long ct){
     firstTime = true;
     currentState = SUIVI_DE_LIGNE;
   }
-}
 
+  bool transitionStop = requestedState == ATTENTE;
+  if (transitionStop){
+    stopMotors();
+    firstTime = true;
+    currentState = requestedState;
+  }
+}
 
 bool isEndOfLine(){
   for (int i = 0; i < NB_IR; i++){
@@ -609,8 +649,35 @@ bool isEndOfLine(){
   return true;
 }
 
-
 void attentifState(){
+  static bool firstTime = true;
+  if (firstTime){
+    Serial.print("État: ");
+    Serial.println(currentState);
+    firstTime = false;
+    speed = 50;
+  }
+
+  followLine();
+
+  bool transition = isEndOfLine();
+  if (transition){
+    firstTime = true;
+    stopMotors();
+    currentState = DEMI_TOUR;
+  }
+
+  bool transitionStop = requestedState == ATTENTE;
+  if (transitionStop){
+    stopMotors();
+    currentState = requestedState;
+  }
+}
+
+void verificationState(){}
+void stationnementState(){}
+
+void manuelState(){
   static bool firstTime = true;
   if (firstTime){
     Serial.print("État: ");
@@ -618,20 +685,13 @@ void attentifState(){
     firstTime = false;
   }
 
-  followLine();
-
-  bool transition = isEndOfLine();
-  if (transition){
+  bool transitionStop = requestedState == ATTENTE;
+  if (transitionStop){
     stopMotors();
-    currentState = DEMI_TOUR;
-  }
-  
+    currentState = requestedState;
+  } 
 }
-void verificationState(){}
-void stationnementState(){}
-void manuelState(){
-  
-}
+
 void termineState(){}
 
 
